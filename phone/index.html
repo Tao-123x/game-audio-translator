@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Game Translator</title>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #000;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#status-bar {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+#status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f44;
+  transition: background 0.3s;
+}
+
+#status-dot.connected {
+  background: #4f4;
+}
+
+#subtitles {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 16px;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.subtitle-item {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.subtitle-zh {
+  font-size: 28px;
+  line-height: 1.4;
+  color: #fff;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.subtitle-en {
+  font-size: 14px;
+  line-height: 1.3;
+  color: #888;
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+.subtitle-item.fading {
+  opacity: 0.3;
+}
+
+.subtitle-item.partial .subtitle-zh {
+  color: #ccc;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</style>
+</head>
+<body>
+
+<div id="status-bar">
+  <div id="status-dot"></div>
+  <span id="status-text">Connecting...</span>
+</div>
+
+<div id="subtitles"></div>
+
+<script>
+const MAX_SUBTITLES = 6;
+const FADE_TIMEOUT = 5000;
+
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const subtitlesEl = document.getElementById('subtitles');
+
+let currentPartial = null;
+
+// __WS_PORT__ is replaced by the server with the actual port
+const WS_PORT = typeof __WS_PORT__ !== 'undefined' ? __WS_PORT__ : 8765;
+
+function getWsUrl() {
+  const host = window.location.hostname;
+  return `ws://${host}:${WS_PORT}`;
+}
+
+function addSubtitle(textEn, textZh, isPartial) {
+  if (isPartial) {
+    // Update or create partial subtitle
+    if (currentPartial) {
+      const zhEl = currentPartial.querySelector('.subtitle-zh');
+      const enEl = currentPartial.querySelector('.subtitle-en');
+      zhEl.textContent = textZh;
+      enEl.textContent = textEn;
+    } else {
+      currentPartial = createSubtitleElement(textEn, textZh, true);
+      trimSubtitles();
+      subtitlesEl.appendChild(currentPartial);
+    }
+  } else {
+    // Finalize: replace partial with final, or add new
+    if (currentPartial) {
+      currentPartial.classList.remove('partial');
+      const zhEl = currentPartial.querySelector('.subtitle-zh');
+      const enEl = currentPartial.querySelector('.subtitle-en');
+      zhEl.textContent = textZh;
+      enEl.textContent = textEn;
+      scheduleFade(currentPartial);
+      currentPartial = null;
+    } else {
+      const el = createSubtitleElement(textEn, textZh, false);
+      trimSubtitles();
+      subtitlesEl.appendChild(el);
+      scheduleFade(el);
+    }
+  }
+}
+
+function createSubtitleElement(textEn, textZh, isPartial) {
+  const item = document.createElement('div');
+  item.className = 'subtitle-item' + (isPartial ? ' partial' : '');
+
+  const zh = document.createElement('div');
+  zh.className = 'subtitle-zh';
+  zh.textContent = textZh;
+
+  const en = document.createElement('div');
+  en.className = 'subtitle-en';
+  en.textContent = textEn;
+
+  item.appendChild(zh);
+  item.appendChild(en);
+  return item;
+}
+
+function scheduleFade(el) {
+  setTimeout(() => {
+    el.classList.add('fading');
+    setTimeout(() => {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 1000);
+  }, FADE_TIMEOUT);
+}
+
+function trimSubtitles() {
+  while (subtitlesEl.children.length >= MAX_SUBTITLES) {
+    subtitlesEl.removeChild(subtitlesEl.firstChild);
+  }
+}
+
+function connect() {
+  const ws = new WebSocket(getWsUrl());
+
+  ws.onopen = () => {
+    statusDot.classList.add('connected');
+    statusText.textContent = 'Connected';
+  };
+
+  ws.onclose = () => {
+    statusDot.classList.remove('connected');
+    statusText.textContent = 'Reconnecting...';
+    currentPartial = null;
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'partial') {
+        addSubtitle(msg.text_en, msg.text_zh, true);
+      } else if (msg.type === 'final') {
+        addSubtitle(msg.text_en, msg.text_zh, false);
+      }
+    } catch (e) {
+      console.error('Failed to parse message:', e);
+    }
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
