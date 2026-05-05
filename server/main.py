@@ -20,19 +20,20 @@ from ws_server import BroadcastServer
 
 
 async def main():
-    device_index = int(os.getenv("AUDIO_DEVICE_INDEX", "0"))
+    device_index = os.getenv("AUDIO_DEVICE_INDEX")
+    if device_index is not None:
+        device_index = int(device_index)
     ws_port = int(os.getenv("WS_PORT", "8765"))
     http_port = int(os.getenv("HTTP_PORT", "8080"))
 
     print("=== Game Audio Translator ===\n")
     print("Available audio devices:")
     list_devices()
-    print(f"\nUsing device index: {device_index}")
-    print(f"Phone UI: http://<your-ip>:{http_port}")
+    print(f"\nPhone UI: http://<your-ip>:{http_port}")
     print(f"WebSocket: ws://<your-ip>:{ws_port}")
     print("\nStarting...")
 
-    # Start audio capture
+    # Start audio capture (auto-detects WASAPI loopback on Windows)
     audio_q, audio_stream = create_capture_queue(device_index)
 
     # Start STT

@@ -7,7 +7,7 @@
 ```
 server/          # PC 端 Python 服务
   main.py        # 入口，串联所有模块
-  audio_capture.py  # 音频抓取 (sounddevice)
+  audio_capture.py  # 音频抓取 (sounddevice, Windows WASAPI loopback)
   stt.py         # 语音识别 (Google Cloud STT)
   translator.py  # 翻译 (Google Cloud Translation)
   ws_server.py   # WebSocket + HTTP 服务
@@ -23,7 +23,7 @@ test/
 2. 音频格式：PCM16 mono 16kHz
 3. WebSocket 协议：JSON，type 字段区分 partial/final
 4. 不使用前端框架，phone/index.html 是纯 HTML+CSS+JS 单文件
-5. 不 hook 游戏进程，只在 OS 音频驱动层抓取
+5. 不 hook 游戏进程，只在 OS 音频驱动层抓取（Windows 用 WASAPI loopback，无需 VoiceMeeter）
 6. 所有配置走 .env，不硬编码
 7. Python 代码用英文注释，仅在需要解释业务逻辑时加注释
 
