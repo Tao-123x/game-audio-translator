@@ -1,11 +1,10 @@
 """Main entry point for Game Audio Translator.
 
-Wires together: audio capture → STT → translation → WebSocket broadcast.
+Wires together: audio capture -> STT -> translation -> WebSocket broadcast.
 """
 
 import asyncio
 import os
-import sys
 import queue
 
 from dotenv import load_dotenv
@@ -17,6 +16,43 @@ from audio_capture import create_capture_queue, list_devices
 from stt import StreamingTranscriber
 from translator import Translator
 from ws_server import BroadcastServer
+
+
+async def feed_audio(audio_q: queue.Queue, transcriber: StreamingTranscriber):
+    """Bridge audio capture (thread) to STT (thread). Runs in executor."""
+    loop = asyncio.get_event_loop()
+    while True:
+        chunk = await loop.run_in_executor(None, audio_q.get)
+        transcriber.audio_queue.put(chunk)
+
+
+async def process_results(
+    result_queue: asyncio.Queue,
+    translator: Translator,
+    server: BroadcastServer,
+):
+    """Translate STT results and broadcast to phones."""
+    while True:
+        result = await result_queue.get()
+
+        if "partial" in result:
+            text_en = result["partial"]
+            text_zh = translator.translate(text_en)
+            await server.broadcast({
+                "type": "partial",
+                "text_en": text_en,
+                "text_zh": text_zh,
+            })
+        elif "final" in result:
+            text_en = result["final"]
+            text_zh = translator.translate(text_en)
+            await server.broadcast({
+                "type": "final",
+                "text_en": text_en,
+                "text_zh": text_zh,
+            })
+            print(f"[EN] {text_en}")
+            print(f"[ZH] {text_zh}\n")
 
 
 async def main():
@@ -33,11 +69,20 @@ async def main():
     print(f"WebSocket: ws://<your-ip>:{ws_port}")
     print("\nStarting...")
 
+    # Shared result queue (asyncio.Queue for async consumers)
+    result_queue: asyncio.Queue = asyncio.Queue()
+
+    # Callback for STT to deliver results into asyncio world
+    loop = asyncio.get_event_loop()
+
+    def on_stt_result(result):
+        loop.call_soon_threadsafe(result_queue.put_nowait, result)
+
     # Start audio capture (auto-detects WASAPI loopback on Windows)
     audio_q, audio_stream = create_capture_queue(device_index)
 
-    # Start STT
-    transcriber = StreamingTranscriber(language="en-US")
+    # Start STT with reconnection
+    transcriber = StreamingTranscriber(language="en-US", on_result=on_stt_result)
     transcriber.start()
 
     # Start translator
@@ -46,50 +91,15 @@ async def main():
     # Start WebSocket server
     server = BroadcastServer(ws_port=ws_port, http_port=http_port)
 
-    # Run HTTP and WS servers concurrently
-    http_task = asyncio.create_task(server.start_http())
-    ws_task = asyncio.create_task(server.start_ws())
-
     print("\nReady! Waiting for audio...\n")
 
-    loop = asyncio.get_event_loop()
-
     try:
-        while True:
-            # Feed audio chunks to STT (non-blocking via executor)
-            try:
-                chunk = await loop.run_in_executor(None, audio_q.get)
-                transcriber.audio_queue.put(chunk)
-            except queue.Empty:
-                pass
-
-            # Check for STT results
-            try:
-                result = transcriber.result_queue.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.01)
-                continue
-
-            # Process STT result
-            if "partial" in result:
-                text_en = result["partial"]
-                text_zh = translator.translate(text_en)
-                await server.broadcast({
-                    "type": "partial",
-                    "text_en": text_en,
-                    "text_zh": text_zh,
-                })
-            elif "final" in result:
-                text_en = result["final"]
-                text_zh = translator.translate(text_en)
-                await server.broadcast({
-                    "type": "final",
-                    "text_en": text_en,
-                    "text_zh": text_zh,
-                })
-                print(f"[EN] {text_en}")
-                print(f"[ZH] {text_zh}\n")
-
+        await asyncio.gather(
+            server.start_http(),
+            server.start_ws(),
+            feed_audio(audio_q, transcriber),
+            process_results(result_queue, translator, server),
+        )
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:

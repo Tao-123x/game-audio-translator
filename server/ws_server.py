@@ -26,7 +26,6 @@ class BroadcastServer:
         print(f"Phone connected: {client_info}")
         try:
             async for message in websocket:
-                # Phone can send messages but we don't need them for MVP
                 pass
         except websockets.ConnectionClosed:
             pass
@@ -35,17 +34,18 @@ class BroadcastServer:
             print(f"Phone disconnected: {client_info}")
 
     async def broadcast(self, message: dict):
-        """Send a JSON message to all connected phone clients."""
+        """Send a JSON message to all connected phone clients concurrently."""
         if not self.clients:
             return
         data = json.dumps(message, ensure_ascii=False)
-        dead = set()
-        for ws in self.clients:
+
+        async def _send(ws):
             try:
                 await ws.send(data)
             except websockets.ConnectionClosed:
-                dead.add(ws)
-        self.clients -= dead
+                self.clients.discard(ws)
+
+        await asyncio.gather(*[_send(ws) for ws in list(self.clients)])
 
     async def start_ws(self):
         """Start the WebSocket server."""
@@ -62,21 +62,19 @@ class BroadcastServer:
         async def http_handler(reader, writer):
             try:
                 request_line = await reader.readline()
-                # Parse the request path
                 parts = request_line.decode().split()
                 path = parts[1] if len(parts) > 1 else "/"
 
                 if path == "/" or path == "/index.html":
                     with open(phone_html_path, "r") as f:
                         content = f.read()
-                    # Inject the WS port into the HTML
                     content = content.replace(
                         "__WS_PORT__", str(self.ws_port)
                     )
                     response = (
                         f"HTTP/1.1 200 OK\r\n"
                         f"Content-Type: text/html; charset=utf-8\r\n"
-                        f"Content-Length: {len(content)}\r\n"
+                        f"Content-Length: {len(content.encode())}\r\n"
                         f"Connection: close\r\n"
                         f"\r\n"
                         f"{content}"
