@@ -62,29 +62,40 @@ class BroadcastServer:
         async def http_handler(reader, writer):
             try:
                 request_line = await reader.readline()
+                if not request_line:
+                    return
                 parts = request_line.decode().split()
+                method = parts[0] if parts else "GET"
                 path = parts[1] if len(parts) > 1 else "/"
 
+                # Consume remaining headers
+                while True:
+                    line = await reader.readline()
+                    if line == b"\r\n" or line == b"\n" or not line:
+                        break
+
                 if path == "/" or path == "/index.html":
-                    with open(phone_html_path, "r") as f:
+                    with open(phone_html_path, "r", encoding="utf-8") as f:
                         content = f.read()
-                    content = content.replace(
-                        "__WS_PORT__", str(self.ws_port)
-                    )
+                    content = content.replace("__WS_PORT__", str(self.ws_port))
+                    body = content.encode("utf-8")
                     response = (
                         f"HTTP/1.1 200 OK\r\n"
                         f"Content-Type: text/html; charset=utf-8\r\n"
-                        f"Content-Length: {len(content.encode())}\r\n"
+                        f"Content-Length: {len(body)}\r\n"
                         f"Connection: close\r\n"
                         f"\r\n"
-                        f"{content}"
-                    )
+                    ).encode() + body
+                elif path == "/favicon.ico":
+                    response = b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+                elif path == "/health":
+                    response = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nok"
                 else:
-                    response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
-                writer.write(response.encode())
+                    response = b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+                writer.write(response)
                 await writer.drain()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[HTTP] Error: {e}")
             finally:
                 writer.close()
 

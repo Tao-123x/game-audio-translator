@@ -1,6 +1,6 @@
 """Google Cloud Translation wrapper.
 
-Simple English to Chinese translation.
+English to Chinese translation with error handling.
 """
 
 from google.cloud import translate_v2 as translate
@@ -13,15 +13,14 @@ class Translator:
         self.client = translate.Client()
 
     def translate(self, text: str, source: str = "en", target: str = "zh-CN") -> str:
-        """Translate text.
-
-        Args:
-            text: Source text to translate.
-            source: Source language code.
-            target: Target language code.
-
-        Returns:
-            Translated text string.
-        """
-        result = self.client.translate(text, source_language=source, target_language=target)
-        return result["translatedText"]
+        """Translate text. Returns original text on failure."""
+        if not text or not text.strip():
+            return ""
+        try:
+            result = self.client.translate(
+                text, source_language=source, target_language=target
+            )
+            return result["translatedText"]
+        except Exception as e:
+            print(f"[Translate] Error: {e}")
+            return text
